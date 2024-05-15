@@ -2,11 +2,11 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Management;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Security;
 using System.Text;
+using WmiLight;
 
 // https://docs.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-osversioninfoexa
 
@@ -43,17 +43,12 @@ namespace Hardware.Info.Windows
 
         public bool UseAsteriskInWMI { get; set; }
 
-        private readonly string _managementScope = "root\\cimv2";
-        private readonly string _managementScopeWmi = "root\\wmi";
-        private readonly EnumerationOptions _enumerationOptions = new EnumerationOptions() { ReturnImmediately = true, Rewindable = false, Timeout = EnumerationOptions.InfiniteTimeout };
+        private readonly string _managementScope = "\\\\.\\root\\cimv2";
+        private readonly string _managementScopeWmi = "\\\\.\\root\\wmi";
+        private readonly EnumeratorBehaviorOption _enumerationOptions = EnumeratorBehaviorOption.ReturnImmediately;
 
-        public HardwareInfoRetrieval(TimeSpan? enumerationOptionsTimeout = null)
+        public HardwareInfoRetrieval()
         {
-            if (enumerationOptionsTimeout == null)
-                enumerationOptionsTimeout = EnumerationOptions.InfiniteTimeout;
-
-            _enumerationOptions = new EnumerationOptions() { ReturnImmediately = true, Rewindable = false, Timeout = enumerationOptionsTimeout.Value };
-
             GetOs();
         }
 
@@ -95,9 +90,12 @@ namespace Hardware.Info.Windows
         {
             string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_OperatingSystem"
                                                   : "SELECT Caption, Version FROM Win32_OperatingSystem";
-            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
 
-            foreach (ManagementBaseObject mo in mos.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+
+            var mos = con.CreateQuery(queryString, _enumerationOptions);
+
+            foreach (WmiObject mo in mos)
             {
                 _os.Name = GetPropertyString(mo["Caption"]);
                 _os.VersionString = GetPropertyString(mo["Version"]);
@@ -193,9 +191,12 @@ namespace Hardware.Info.Windows
 
             string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_Battery"
                                                   : "SELECT FullChargeCapacity, DesignCapacity, BatteryStatus, EstimatedChargeRemaining, EstimatedRunTime, ExpectedLife, MaxRechargeTime, TimeOnBattery, TimeToFullCharge FROM Win32_Battery";
-            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
 
-            foreach (ManagementBaseObject mo in mos.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+
+            var mos = con.CreateQuery(queryString, _enumerationOptions);
+
+            foreach (WmiObject mo in mos)
             {
                 Battery battery = new Battery
                 {
@@ -222,9 +223,12 @@ namespace Hardware.Info.Windows
 
             string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_BIOS"
                                                   : "SELECT Caption, Description, Manufacturer, Name, ReleaseDate, SerialNumber, SoftwareElementID, Version FROM Win32_BIOS";
-            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
 
-            foreach (ManagementBaseObject mo in mos.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+
+            var mos = con.CreateQuery(queryString, _enumerationOptions);
+
+            foreach (WmiObject mo in mos)
             {
                 BIOS bios = new BIOS
                 {
@@ -248,155 +252,160 @@ namespace Hardware.Info.Windows
         {
             List<CPU> cpuList = new List<CPU>();
 
-            List<CpuCore> cpuCoreList = new List<CpuCore>();
+                List<CpuCore> cpuCoreList = new List<CpuCore>();
 
-            ulong percentProcessorTime = 0ul;
+                ulong percentProcessorTime = 0ul;
 
-            if (includePercentProcessorTime)
-            {
-                string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name != '_Total'"
-                                                      : "SELECT Name, PercentProcessorTime FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name != '_Total'";
-                ManagementObjectSearcher percentProcessorTimeMOS = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
+                using WmiConnection con = new WmiConnection(_managementScope);
 
-                queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name = '_Total'"
-                                               : "SELECT PercentProcessorTime FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name = '_Total'";
-                ManagementObjectSearcher totalPercentProcessorTimeMOS = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
+                if (includePercentProcessorTime)
+                {
+                    string queryString = UseAsteriskInWMI
+                        ? "SELECT * FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name != '_Total'"
+                        : "SELECT Name, PercentProcessorTime FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name != '_Total'";
+                    var percentProcessorTimeQuery = con.CreateQuery(queryString, _enumerationOptions);
+
+                    queryString = UseAsteriskInWMI
+                        ? "SELECT * FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name = '_Total'"
+                        : "SELECT PercentProcessorTime FROM Win32_PerfFormattedData_PerfOS_Processor WHERE Name = '_Total'";
+                    var totalPercentProcessorTimeQuery = con.CreateQuery(queryString, _enumerationOptions);
+
+                    try
+                    {
+                        foreach (WmiObject mo in percentProcessorTimeQuery)
+                        {
+                            CpuCore core = new CpuCore
+                            {
+                                Name = GetPropertyString(mo["Name"]),
+                                PercentProcessorTime = GetPropertyValue<ulong>(mo["PercentProcessorTime"])
+                            };
+
+                            cpuCoreList.Add(core);
+                        }
+
+                        foreach (WmiObject mo in totalPercentProcessorTimeQuery)
+                        {
+                            percentProcessorTime = GetPropertyValue<ulong>(mo["PercentProcessorTime"]);
+                        }
+                    }
+                    catch (WmiException)
+                    {
+                        // https://github.com/Jinjinov/Hardware.Info/issues/30
+                    }
+
+                    if (percentProcessorTime == 0ul)
+                    {
+                        queryString = UseAsteriskInWMI
+                            ? "SELECT * FROM Win32_Processor"
+                            : "SELECT LoadPercentage FROM Win32_Processor";
+                        var loadPercentageQuery = con.CreateQuery(queryString, _enumerationOptions);
+
+                        foreach (WmiObject mo in loadPercentageQuery)
+                        {
+                            percentProcessorTime = GetPropertyValue<ushort>(mo["LoadPercentage"]);
+                        }
+                    }
+                }
+
+                bool isAtLeastWin8 = (_os.Version.Major == 6 && _os.Version.Minor >= 2) || (_os.Version.Major > 6);
+
+                string query = UseAsteriskInWMI
+                    ? "SELECT * FROM Win32_Processor"
+                    : isAtLeastWin8
+                        ? "SELECT Caption, CurrentClockSpeed, Description, L2CacheSize, L3CacheSize, Manufacturer, MaxClockSpeed, Name, NumberOfCores, NumberOfLogicalProcessors, ProcessorId, SecondLevelAddressTranslationExtensions, SocketDesignation, VirtualizationFirmwareEnabled, VMMonitorModeExtensions FROM Win32_Processor"
+                        : "SELECT Caption, CurrentClockSpeed, Description, L2CacheSize, L3CacheSize, Manufacturer, MaxClockSpeed, Name, NumberOfCores, NumberOfLogicalProcessors, ProcessorId, SocketDesignation FROM Win32_Processor";
+                var mos = con.CreateQuery(query, _enumerationOptions);
+
+                float processorPerformance = 100f;
 
                 try
                 {
-                    foreach (ManagementBaseObject mo in percentProcessorTimeMOS.Get())
-                    {
-                        CpuCore core = new CpuCore
-                        {
-                            Name = GetPropertyString(mo["Name"]),
-                            PercentProcessorTime = GetPropertyValue<ulong>(mo["PercentProcessorTime"])
-                        };
+                    using PerformanceCounter cpuCounter =
+                        new PerformanceCounter("Processor Information", "% Processor Performance", "_Total");
+                    processorPerformance = cpuCounter.NextValue();
+                    System.Threading.Thread.Sleep(1); // the first call to NextValue() always returns 0
+                    processorPerformance = cpuCounter.NextValue();
+                }
+                catch
+                {
+                    // Ignore performance counter errors and just assume that it's at 100 %
+                }
 
-                        cpuCoreList.Add(core);
+                uint L1InstructionCacheSize = 0;
+                uint L1DataCacheSize = 0;
+                // L1 = 3
+                // L2 = 4
+                // L3 = 5
+                query = UseAsteriskInWMI
+                    ? "SELECT * FROM Win32_CacheMemory WHERE Level = 3"
+                    : "SELECT CacheType, MaxCacheSize FROM Win32_CacheMemory WHERE Level = 3";
+
+                var Win32_CacheMemory = con.CreateQuery(query, _enumerationOptions);
+
+                // Other = 1
+                // Unknown = 2
+                // Instruction = 3
+                // Data = 4
+                // Unified = 5
+                foreach (WmiObject mo in Win32_CacheMemory)
+                {
+                    ushort CacheType = GetPropertyValue<ushort>(mo["CacheType"]);
+                    uint MaxCacheSize = 1024 * GetPropertyValue<uint>(mo["MaxCacheSize"]);
+
+                    // if CacheType is Other or Unknown
+                    if (L1InstructionCacheSize == 0)
+                        L1InstructionCacheSize = MaxCacheSize;
+
+                    // if CacheType is Other or Unknown
+                    if (L1DataCacheSize == 0)
+                        L1DataCacheSize = MaxCacheSize;
+
+                    if (CacheType == 3) // Instruction
+                        L1InstructionCacheSize = MaxCacheSize;
+
+                    if (CacheType == 4) // Data
+                        L1DataCacheSize = MaxCacheSize;
+                }
+
+                foreach (WmiObject mo in mos)
+                {
+                    uint maxClockSpeed = GetPropertyValue<uint>(mo["MaxClockSpeed"]);
+
+                    uint currentClockSpeed = (uint)(maxClockSpeed * (processorPerformance / 100));
+
+                    CPU cpu = new CPU
+                    {
+                        Caption = GetPropertyString(mo["Caption"]),
+                        //CurrentClockSpeed = GetPropertyValue<uint>(mo["CurrentClockSpeed"]), https://stackoverflow.com/questions/61802420/unable-to-get-current-cpu-frequency-in-powershell-or-python
+                        CurrentClockSpeed = currentClockSpeed,
+                        Description = GetPropertyString(mo["Description"]),
+                        L1InstructionCacheSize = L1InstructionCacheSize,
+                        L1DataCacheSize = L1DataCacheSize,
+                        L2CacheSize = 1024 * GetPropertyValue<uint>(mo["L2CacheSize"]),
+                        L3CacheSize = 1024 * GetPropertyValue<uint>(mo["L3CacheSize"]),
+                        Manufacturer = GetPropertyString(mo["Manufacturer"]),
+                        MaxClockSpeed = maxClockSpeed,
+                        Name = GetPropertyString(mo["Name"]),
+                        NumberOfCores = GetPropertyValue<uint>(mo["NumberOfCores"]),
+                        NumberOfLogicalProcessors = GetPropertyValue<uint>(mo["NumberOfLogicalProcessors"]),
+                        ProcessorId = GetPropertyString(mo["ProcessorId"]),
+                        SocketDesignation = GetPropertyString(mo["SocketDesignation"]),
+                        PercentProcessorTime = percentProcessorTime,
+                        CpuCoreList = cpuCoreList
+                    };
+
+                    if (isAtLeastWin8)
+                    {
+                        cpu.SecondLevelAddressTranslationExtensions =
+                            GetPropertyValue<bool>(mo["SecondLevelAddressTranslationExtensions"]);
+                        cpu.VirtualizationFirmwareEnabled = GetPropertyValue<bool>(mo["VirtualizationFirmwareEnabled"]);
+                        cpu.VMMonitorModeExtensions = GetPropertyValue<bool>(mo["VMMonitorModeExtensions"]);
                     }
 
-                    foreach (ManagementBaseObject mo in totalPercentProcessorTimeMOS.Get())
-                    {
-                        percentProcessorTime = GetPropertyValue<ulong>(mo["PercentProcessorTime"]);
-                    }
-                }
-                catch (ManagementException)
-                {
-                    // https://github.com/Jinjinov/Hardware.Info/issues/30
-                }
-                finally
-                {
-                    percentProcessorTimeMOS.Dispose();
-
-                    totalPercentProcessorTimeMOS.Dispose();
+                    cpuList.Add(cpu);
                 }
 
-                if (percentProcessorTime == 0ul)
-                {
-                    queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_Processor"
-                                                   : "SELECT LoadPercentage FROM Win32_Processor";
-                    using ManagementObjectSearcher loadPercentageMOS = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
-
-                    foreach (ManagementBaseObject mo in loadPercentageMOS.Get())
-                    {
-                        percentProcessorTime = GetPropertyValue<ushort>(mo["LoadPercentage"]);
-                    }
-                }
-            }
-
-            bool isAtLeastWin8 = (_os.Version.Major == 6 && _os.Version.Minor >= 2) || (_os.Version.Major > 6);
-
-            string query = UseAsteriskInWMI ? "SELECT * FROM Win32_Processor"
-                                            : isAtLeastWin8 ? "SELECT Caption, CurrentClockSpeed, Description, L2CacheSize, L3CacheSize, Manufacturer, MaxClockSpeed, Name, NumberOfCores, NumberOfLogicalProcessors, ProcessorId, SecondLevelAddressTranslationExtensions, SocketDesignation, VirtualizationFirmwareEnabled, VMMonitorModeExtensions FROM Win32_Processor"
-                                                            : "SELECT Caption, CurrentClockSpeed, Description, L2CacheSize, L3CacheSize, Manufacturer, MaxClockSpeed, Name, NumberOfCores, NumberOfLogicalProcessors, ProcessorId, SocketDesignation FROM Win32_Processor";
-            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, query, _enumerationOptions);
-
-            float processorPerformance = 100f;
-
-            try
-            {
-                using PerformanceCounter cpuCounter = new PerformanceCounter("Processor Information", "% Processor Performance", "_Total");
-                processorPerformance = cpuCounter.NextValue();
-                System.Threading.Thread.Sleep(1); // the first call to NextValue() always returns 0
-                processorPerformance = cpuCounter.NextValue();
-            }
-            catch
-            {
-                // Ignore performance counter errors and just assume that it's at 100 %
-            }
-
-            uint L1InstructionCacheSize = 0;
-            uint L1DataCacheSize = 0;
-            // L1 = 3
-            // L2 = 4
-            // L3 = 5
-            query = UseAsteriskInWMI ? "SELECT * FROM Win32_CacheMemory WHERE Level = 3"
-                                     : "SELECT CacheType, MaxCacheSize FROM Win32_CacheMemory WHERE Level = 3";
-            using ManagementObjectSearcher Win32_CacheMemory = new ManagementObjectSearcher(_managementScope, query, _enumerationOptions);
-
-            // Other = 1
-            // Unknown = 2
-            // Instruction = 3
-            // Data = 4
-            // Unified = 5
-            foreach (ManagementObject mo in Win32_CacheMemory.Get())
-            {
-                ushort CacheType = GetPropertyValue<ushort>(mo["CacheType"]);
-                uint MaxCacheSize = 1024 * GetPropertyValue<uint>(mo["MaxCacheSize"]);
-
-                // if CacheType is Other or Unknown
-                if (L1InstructionCacheSize == 0)
-                    L1InstructionCacheSize = MaxCacheSize;
-
-                // if CacheType is Other or Unknown
-                if (L1DataCacheSize == 0)
-                    L1DataCacheSize = MaxCacheSize;
-
-                if (CacheType == 3) // Instruction
-                    L1InstructionCacheSize = MaxCacheSize;
-
-                if (CacheType == 4) // Data
-                    L1DataCacheSize = MaxCacheSize;
-            }
-
-            foreach (ManagementBaseObject mo in mos.Get())
-            {
-                uint maxClockSpeed = GetPropertyValue<uint>(mo["MaxClockSpeed"]);
-
-                uint currentClockSpeed = (uint)(maxClockSpeed * (processorPerformance / 100));
-
-                CPU cpu = new CPU
-                {
-                    Caption = GetPropertyString(mo["Caption"]),
-                    //CurrentClockSpeed = GetPropertyValue<uint>(mo["CurrentClockSpeed"]), https://stackoverflow.com/questions/61802420/unable-to-get-current-cpu-frequency-in-powershell-or-python
-                    CurrentClockSpeed = currentClockSpeed,
-                    Description = GetPropertyString(mo["Description"]),
-                    L1InstructionCacheSize = L1InstructionCacheSize,
-                    L1DataCacheSize = L1DataCacheSize,
-                    L2CacheSize = 1024 * GetPropertyValue<uint>(mo["L2CacheSize"]),
-                    L3CacheSize = 1024 * GetPropertyValue<uint>(mo["L3CacheSize"]),
-                    Manufacturer = GetPropertyString(mo["Manufacturer"]),
-                    MaxClockSpeed = maxClockSpeed,
-                    Name = GetPropertyString(mo["Name"]),
-                    NumberOfCores = GetPropertyValue<uint>(mo["NumberOfCores"]),
-                    NumberOfLogicalProcessors = GetPropertyValue<uint>(mo["NumberOfLogicalProcessors"]),
-                    ProcessorId = GetPropertyString(mo["ProcessorId"]),
-                    SocketDesignation = GetPropertyString(mo["SocketDesignation"]),
-                    PercentProcessorTime = percentProcessorTime,
-                    CpuCoreList = cpuCoreList
-                };
-
-                if (isAtLeastWin8)
-                {
-                    cpu.SecondLevelAddressTranslationExtensions = GetPropertyValue<bool>(mo["SecondLevelAddressTranslationExtensions"]);
-                    cpu.VirtualizationFirmwareEnabled = GetPropertyValue<bool>(mo["VirtualizationFirmwareEnabled"]);
-                    cpu.VMMonitorModeExtensions = GetPropertyValue<bool>(mo["VMMonitorModeExtensions"]);
-                }
-
-                cpuList.Add(cpu);
-            }
-
-            return cpuList;
+                return cpuList;
         }
 
         public override List<Drive> GetDriveList()
@@ -405,9 +414,12 @@ namespace Hardware.Info.Windows
 
             string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_DiskDrive"
                                                   : "SELECT Caption, Description, DeviceID, FirmwareRevision, Index, Manufacturer, Model, Name, Partitions, SerialNumber, Size FROM Win32_DiskDrive";
-            using ManagementObjectSearcher Win32_DiskDrive = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
 
-            foreach (ManagementBaseObject DiskDrive in Win32_DiskDrive.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+
+            var Win32_DiskDrive = con.CreateQuery(queryString, _enumerationOptions);
+
+            foreach (WmiObject DiskDrive in Win32_DiskDrive)
             {
                 Drive drive = new Drive
                 {
@@ -424,9 +436,9 @@ namespace Hardware.Info.Windows
                 };
 
                 string queryString1 = "ASSOCIATORS OF {Win32_DiskDrive.DeviceID='" + DiskDrive["DeviceID"] + "'} WHERE AssocClass = Win32_DiskDriveToDiskPartition";
-                using ManagementObjectSearcher Win32_DiskPartition = new ManagementObjectSearcher(_managementScope, queryString1, _enumerationOptions);
+               var Win32_DiskPartition = con.CreateQuery(queryString1, _enumerationOptions);
 
-                foreach (ManagementBaseObject DiskPartition in Win32_DiskPartition.Get())
+                foreach (WmiObject DiskPartition in Win32_DiskPartition)
                 {
                     Partition partition = new Partition
                     {
@@ -443,9 +455,9 @@ namespace Hardware.Info.Windows
                     };
 
                     string queryString2 = "ASSOCIATORS OF {Win32_DiskPartition.DeviceID='" + DiskPartition["DeviceID"] + "'} WHERE AssocClass = Win32_LogicalDiskToPartition";
-                    using ManagementObjectSearcher Win32_LogicalDisk = new ManagementObjectSearcher(_managementScope, queryString2, _enumerationOptions);
+                    var Win32_LogicalDisk = con.CreateQuery(queryString2, _enumerationOptions);
 
-                    foreach (ManagementBaseObject LogicalDisk in Win32_LogicalDisk.Get())
+                    foreach (WmiObject LogicalDisk in Win32_LogicalDisk)
                     {
                         Volume volume = new Volume
                         {
@@ -478,9 +490,12 @@ namespace Hardware.Info.Windows
 
             string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_Keyboard"
                                                   : "SELECT Caption, Description, Name, NumberOfFunctionKeys FROM Win32_Keyboard";
-            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
 
-            foreach (ManagementBaseObject mo in mos.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+
+            var mos = con.CreateQuery(queryString, _enumerationOptions);
+
+            foreach (WmiObject mo in mos)
             {
                 Keyboard keyboard = new Keyboard
                 {
@@ -503,9 +518,12 @@ namespace Hardware.Info.Windows
             string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_PhysicalMemory"
                                                   : _os.Version.Major >= 10 ? "SELECT BankLabel, Capacity, FormFactor, Manufacturer, MaxVoltage, MinVoltage, PartNumber, SerialNumber, Speed FROM Win32_PhysicalMemory"
                                                                             : "SELECT BankLabel, Capacity, FormFactor, Manufacturer, PartNumber, SerialNumber, Speed FROM Win32_PhysicalMemory";
-            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
 
-            foreach (ManagementBaseObject mo in mos.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+
+            var mos = con.CreateQuery(queryString, _enumerationOptions);
+
+            foreach (WmiObject mo in mos)
             {
                 Memory memory = new Memory
                 {
@@ -536,21 +554,25 @@ namespace Hardware.Info.Windows
 
             string win32PnpEntityQuery = UseAsteriskInWMI ? "SELECT * FROM Win32_PnPEntity WHERE PNPClass='Monitor'"
                                                           : "SELECT DeviceId FROM Win32_PnPEntity WHERE PNPClass='Monitor'";
-            using ManagementObjectSearcher win32PnpEntityMos = new ManagementObjectSearcher(_managementScope, win32PnpEntityQuery, _enumerationOptions);
 
-            foreach (ManagementBaseObject win32PnpEntityMo in win32PnpEntityMos.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+            using WmiConnection conWmi = new WmiConnection(_managementScopeWmi);
+
+            var win32PnpEntityMos = con.CreateQuery(win32PnpEntityQuery, _enumerationOptions);
+
+            foreach (WmiObject win32PnpEntityMo in win32PnpEntityMos)
             {
                 string deviceId = GetPropertyString(win32PnpEntityMo["DeviceId"]);
                 string win32DesktopMonitorQuery = UseAsteriskInWMI ? $"SELECT * FROM Win32_DesktopMonitor WHERE PNPDeviceId='{deviceId}'"
                                                                    : $"SELECT Caption, Description, MonitorManufacturer, MonitorType, Name, PixelsPerXLogicalInch, PixelsPerYLogicalInch FROM Win32_DesktopMonitor WHERE PNPDeviceId='{deviceId}'";
-                using ManagementObjectSearcher win32DesktopMonitorMos = new ManagementObjectSearcher(_managementScope, win32DesktopMonitorQuery.Replace(@"\", @"\\"), _enumerationOptions);
-                
+                var win32DesktopMonitorMos = con.CreateQuery(win32DesktopMonitorQuery.Replace(@"\", @"\\"), _enumerationOptions);
+
                 string wmiMonitorIdQuery = UseAsteriskInWMI ? $"SELECT * FROM WmiMonitorID WHERE InstanceName LIKE '{deviceId}%'"
                                                             : $"SELECT Active, ProductCodeID, SerialNumberID, ManufacturerName, UserFriendlyName, WeekOfManufacture, YearOfManufacture FROM WmiMonitorID WHERE InstanceName LIKE '{deviceId}%'";
-                using ManagementObjectSearcher wmiMonitorIdMos = new ManagementObjectSearcher(_managementScopeWmi, wmiMonitorIdQuery.Replace(@"\", "_"), _enumerationOptions);
+                var wmiMonitorIdMos = conWmi.CreateQuery(wmiMonitorIdQuery.Replace(@"\", "_"), _enumerationOptions);
 
-                using ManagementBaseObject? desktopMonitorMo = win32DesktopMonitorMos.Get().Cast<ManagementBaseObject>().FirstOrDefault();
-                using ManagementBaseObject? wmiMonitorIdMo = wmiMonitorIdMos.Get().Cast<ManagementBaseObject>().FirstOrDefault();
+                using WmiObject? desktopMonitorMo = win32DesktopMonitorMos.Cast<WmiObject>().FirstOrDefault();
+                using WmiObject? wmiMonitorIdMo = wmiMonitorIdMos.Cast<WmiObject>().FirstOrDefault();
 
                 Monitor monitor = new Monitor();
 
@@ -588,9 +610,12 @@ namespace Hardware.Info.Windows
 
             string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_BaseBoard"
                                                   : "SELECT Manufacturer, Product, SerialNumber FROM Win32_BaseBoard";
-            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
 
-            foreach (ManagementBaseObject mo in mos.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+
+            var mos = con.CreateQuery(queryString, _enumerationOptions);
+
+            foreach (WmiObject mo in mos)
             {
                 Motherboard motherboard = new Motherboard
                 {
@@ -611,9 +636,12 @@ namespace Hardware.Info.Windows
 
             string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_PointingDevice"
                                                   : "SELECT Caption, Description, Manufacturer, Name, NumberOfButtons FROM Win32_PointingDevice";
-            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
 
-            foreach (ManagementBaseObject mo in mos.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+
+            var mos = con.CreateQuery(queryString, _enumerationOptions);
+
+            foreach (WmiObject mo in mos)
             {
                 Mouse mouse = new Mouse
                 {
@@ -635,10 +663,13 @@ namespace Hardware.Info.Windows
             List<NetworkAdapter> networkAdapterList = new List<NetworkAdapter>();
 
             string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_NetworkAdapter WHERE PhysicalAdapter=True AND MACAddress IS NOT NULL"
-                                                  : "SELECT AdapterType, Caption, Description, DeviceID, MACAddress, Manufacturer, Name, NetConnectionID, ProductName, Speed FROM Win32_NetworkAdapter WHERE PhysicalAdapter=True AND MACAddress IS NOT NULL";
-            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
+                                                  : "SELECT AdapterType, Caption, Description, DeviceID, MACAddress, Manufacturer, Name, NetConnectionID, ProductName, Speed, InterfaceIndex FROM Win32_NetworkAdapter WHERE PhysicalAdapter=True AND MACAddress IS NOT NULL";
 
-            foreach (ManagementBaseObject mo in mos.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+
+            var mos = con.CreateQuery(queryString, _enumerationOptions);
+
+            foreach (WmiObject mo in mos)
             {
                 NetworkAdapter networkAdapter = new NetworkAdapter
                 {
@@ -653,6 +684,8 @@ namespace Hardware.Info.Windows
                     Speed = GetPropertyValue<ulong>(mo["Speed"])
                 };
 
+                var interfaceIndex =  GetPropertyValue<uint>(mo["InterfaceIndex"]);
+
                 if (includeBytesPersec)
                 {
                     // https://learn.microsoft.com/en-us/dotnet/api/system.diagnostics.performancecounter.instancename
@@ -661,9 +694,9 @@ namespace Hardware.Info.Windows
 
                     string query = UseAsteriskInWMI ? $"SELECT * FROM Win32_PerfFormattedData_Tcpip_NetworkAdapter WHERE Name = '{name}'"
                                                     : $"SELECT BytesSentPersec, BytesReceivedPersec, CurrentBandwidth FROM Win32_PerfFormattedData_Tcpip_NetworkAdapter WHERE Name = '{name}'";
-                    using ManagementObjectSearcher managementObjectSearcher = new ManagementObjectSearcher(_managementScope, query, _enumerationOptions);
+                    var managementObjectSearcher = con.CreateQuery(query, _enumerationOptions);
 
-                    foreach (ManagementBaseObject managementObject in managementObjectSearcher.Get())
+                    foreach (WmiObject managementObject in managementObjectSearcher)
                     {
                         networkAdapter.BytesSentPersec = GetPropertyValue<ulong>(managementObject["BytesSentPersec"]);
                         networkAdapter.BytesReceivedPersec = GetPropertyValue<ulong>(managementObject["BytesReceivedPersec"]);
@@ -675,11 +708,15 @@ namespace Hardware.Info.Windows
                     }
                 }
 
-                if (includeNetworkAdapterConfiguration && mo is ManagementObject networkAdapterManagementObject)
+                if (includeNetworkAdapterConfiguration && mo is WmiObject networkAdapterWmiObject)
                 {
                     IPAddress address;
 
-                    foreach (ManagementBaseObject configuration in networkAdapterManagementObject.GetRelated("Win32_NetworkAdapterConfiguration"))
+                    string query = UseAsteriskInWMI ? $"SELECT * FROM Win32_NetworkAdapterConfiguration WHERE InterfaceIndex = {interfaceIndex}"
+                                                    : $"SELECT DefaultIPGateway, DHCPServer, DNSServerSearchOrder, IPAddress, IPSubnet FROM Win32_NetworkAdapterConfiguration WHERE InterfaceIndex = {interfaceIndex}";
+                    var adapterConfigurationQuery = con.CreateQuery(query, _enumerationOptions);
+
+                    foreach (WmiObject configuration in adapterConfigurationQuery)
                     {
                         foreach (string str in GetPropertyArray<string>(configuration["DefaultIPGateway"]))
                             if (IPAddress.TryParse(str, out address))
@@ -714,9 +751,12 @@ namespace Hardware.Info.Windows
 
             string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_Printer"
                                                   : "SELECT Caption, Default, Description, HorizontalResolution, Local, Name, Network, Shared, VerticalResolution FROM Win32_Printer";
-            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
 
-            foreach (ManagementBaseObject mo in mos.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+
+            var mos = con.CreateQuery(queryString, _enumerationOptions);
+
+            foreach (WmiObject mo in mos)
             {
                 Printer printer = new Printer
                 {
@@ -743,9 +783,12 @@ namespace Hardware.Info.Windows
 
             string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_SoundDevice WHERE NOT Manufacturer='Microsoft'"
                                                   : "SELECT Caption, Description, Manufacturer, Name, ProductName FROM Win32_SoundDevice WHERE NOT Manufacturer='Microsoft'";
-            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
 
-            foreach (ManagementBaseObject mo in mos.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+
+            var mos = con.CreateQuery(queryString, _enumerationOptions);
+
+            foreach (WmiObject mo in mos)
             {
                 SoundDevice soundDevice = new SoundDevice
                 {
@@ -768,9 +811,12 @@ namespace Hardware.Info.Windows
 
             string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_VideoController"
                                                   : "SELECT AdapterCompatibility, AdapterRAM, Caption, CurrentBitsPerPixel, CurrentHorizontalResolution, CurrentNumberOfColors, CurrentRefreshRate, CurrentVerticalResolution, Description, DriverDate, DriverVersion, MaxRefreshRate, MinRefreshRate, Name, PNPDeviceID, VideoModeDescription, VideoProcessor FROM Win32_VideoController";
-            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
 
-            foreach (ManagementBaseObject mo in mos.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+
+            var mos = con.CreateQuery(queryString, _enumerationOptions);
+
+            foreach (WmiObject mo in mos)
             {
                 VideoController videoController = new VideoController
                 {
