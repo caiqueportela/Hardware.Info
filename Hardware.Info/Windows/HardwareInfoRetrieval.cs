@@ -567,12 +567,7 @@ namespace Hardware.Info.Windows
                                                                    : $"SELECT Caption, Description, MonitorManufacturer, MonitorType, Name, PixelsPerXLogicalInch, PixelsPerYLogicalInch FROM Win32_DesktopMonitor WHERE PNPDeviceId='{deviceId}'";
                 var win32DesktopMonitorMos = con.CreateQuery(win32DesktopMonitorQuery.Replace(@"\", @"\\"), _enumerationOptions);
 
-                string wmiMonitorIdQuery = UseAsteriskInWMI ? $"SELECT * FROM WmiMonitorID WHERE InstanceName LIKE '{deviceId}%'"
-                                                            : $"SELECT Active, ProductCodeID, SerialNumberID, ManufacturerName, UserFriendlyName, WeekOfManufacture, YearOfManufacture FROM WmiMonitorID WHERE InstanceName LIKE '{deviceId}%'";
-                var wmiMonitorIdMos = conWmi.CreateQuery(wmiMonitorIdQuery.Replace(@"\", "_"), _enumerationOptions);
-
-                using WmiObject? desktopMonitorMo = win32DesktopMonitorMos.Cast<WmiObject>().FirstOrDefault();
-                using WmiObject? wmiMonitorIdMo = wmiMonitorIdMos.Cast<WmiObject>().FirstOrDefault();
+                using WmiObject? desktopMonitorMo = win32DesktopMonitorMos.FirstOrDefault();
 
                 Monitor monitor = new Monitor();
 
@@ -587,15 +582,33 @@ namespace Hardware.Info.Windows
                     monitor.PixelsPerYLogicalInch = GetPropertyValue<uint>(desktopMonitorMo["PixelsPerYLogicalInch"]);
                 }
 
-                if (wmiMonitorIdMo != null)
+                try
                 {
-                    monitor.Active = GetPropertyValue<bool>(wmiMonitorIdMo["Active"]);
-                    monitor.ProductCodeID = GetStringFromUInt16Array(GetPropertyArray<ushort>(wmiMonitorIdMo["ProductCodeID"]));
-                    monitor.UserFriendlyName = GetStringFromUInt16Array(GetPropertyArray<ushort>(wmiMonitorIdMo["UserFriendlyName"]));
-                    monitor.SerialNumberID = GetStringFromUInt16Array(GetPropertyArray<ushort>(wmiMonitorIdMo["SerialNumberID"]));
-                    monitor.ManufacturerName = GetStringFromUInt16Array(GetPropertyArray<ushort>(wmiMonitorIdMo["ManufacturerName"]));
-                    monitor.WeekOfManufacture = GetPropertyValue<byte>(wmiMonitorIdMo["WeekOfManufacture"]);
-                    monitor.YearOfManufacture = GetPropertyValue<ushort>(wmiMonitorIdMo["YearOfManufacture"]);
+                    string wmiMonitorIdQuery = UseAsteriskInWMI
+                        ? $"SELECT * FROM WmiMonitorID WHERE InstanceName LIKE '{deviceId}%'"
+                        : $"SELECT Active, ProductCodeID, SerialNumberID, ManufacturerName, UserFriendlyName, WeekOfManufacture, YearOfManufacture FROM WmiMonitorID WHERE InstanceName LIKE '{deviceId}%'";
+                    var wmiMonitorIdMos = conWmi.CreateQuery(wmiMonitorIdQuery.Replace(@"\", "_"), _enumerationOptions);
+
+                    using WmiObject? wmiMonitorIdMo = wmiMonitorIdMos.FirstOrDefault();
+
+                    if (wmiMonitorIdMo != null)
+                    {
+                        monitor.Active = GetPropertyValue<bool>(wmiMonitorIdMo["Active"]);
+                        monitor.ProductCodeID =
+                            GetStringFromUInt16Array(GetPropertyArray<ushort>(wmiMonitorIdMo["ProductCodeID"]));
+                        monitor.UserFriendlyName =
+                            GetStringFromUInt16Array(GetPropertyArray<ushort>(wmiMonitorIdMo["UserFriendlyName"]));
+                        monitor.SerialNumberID =
+                            GetStringFromUInt16Array(GetPropertyArray<ushort>(wmiMonitorIdMo["SerialNumberID"]));
+                        monitor.ManufacturerName =
+                            GetStringFromUInt16Array(GetPropertyArray<ushort>(wmiMonitorIdMo["ManufacturerName"]));
+                        monitor.WeekOfManufacture = GetPropertyValue<byte>(wmiMonitorIdMo["WeekOfManufacture"]);
+                        monitor.YearOfManufacture = GetPropertyValue<ushort>(wmiMonitorIdMo["YearOfManufacture"]);
+                    }
+                }
+                catch (Exception ex) when (ex is COMException || ex is WmiException)
+                {
+                    // Ignore WmiMonitorID errors
                 }
 
                 monitorList.Add(monitor);
