@@ -254,9 +254,11 @@ namespace Hardware.Info.Windows
 
             string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_ComputerSystemProduct"
                                                   : "SELECT Caption, Description, IdentifyingNumber, Name, SKUNumber, UUID, Vendor, Version FROM Win32_ComputerSystemProduct";
-            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
 
-            foreach (ManagementBaseObject mo in mos.Get())
+            using WmiConnection con = new WmiConnection(_managementScope);
+            var mos = con.CreateQuery(queryString, _enumerationOptions);
+
+            foreach (WmiObject mo in mos)
             {
                 ComputerSystem computerSystem = new ComputerSystem
                 {
@@ -587,6 +589,19 @@ namespace Hardware.Info.Windows
             using WmiConnection conWmi = new WmiConnection(_managementScopeWmi);
 
             var win32PnpEntityMos = con.CreateQuery(win32PnpEntityQuery, _enumerationOptions);
+
+            try
+            {
+                win32PnpEntityMos.GetEnumerator().MoveNext();
+                win32PnpEntityMos.GetEnumerator().Reset();
+            }
+            catch
+            {
+                win32PnpEntityQuery = UseAsteriskInWMI ? "SELECT * FROM Win32_PnPEntity WHERE Service='Monitor'"
+                    : "SELECT DeviceId FROM Win32_PnPEntity WHERE Service='Monitor'";
+
+                win32PnpEntityMos = con.CreateQuery(win32PnpEntityQuery, _enumerationOptions);
+            }
 
             foreach (WmiObject win32PnpEntityMo in win32PnpEntityMos)
             {
