@@ -145,6 +145,27 @@ namespace Hardware.Info.Linux
             return biosList;
         }
 
+        public List<ComputerSystem> GetComputerSystemList()
+        {
+            List<ComputerSystem> computerSystemList = new List<ComputerSystem>();
+
+            ComputerSystem computerSystem = new ComputerSystem
+            {
+                Caption = TryReadTextFromFile("/sys/class/dmi/id/product_name"),
+                Description = TryReadTextFromFile("/sys/class/dmi/id/product_family"),
+                IdentifyingNumber = TryReadTextFromFile("/sys/class/dmi/id/product_serial"),
+                Name = TryReadTextFromFile("/sys/class/dmi/id/product_name"),
+                SKUNumber = TryReadTextFromFile("/sys/class/dmi/id/product_sku"),
+                UUID = TryReadTextFromFile("/sys/class/dmi/id/product_uuid"),
+                Vendor = TryReadTextFromFile("/sys/class/dmi/id/sys_vendor"),
+                Version = TryReadTextFromFile("/sys/class/dmi/id/product_version")
+            };
+
+            computerSystemList.Add(computerSystem);
+
+            return computerSystemList;
+        }
+
         private class Processor
         {
             public string ProcessorId = string.Empty;
@@ -165,7 +186,7 @@ namespace Hardware.Info.Linux
             public ulong PercentProcessorTime;
         }
 
-        public List<CPU> GetCpuList(bool includePercentProcessorTime = true)
+        public List<CPU> GetCpuList(bool includePercentProcessorTime = true, int millisecondsDelayBetweenTwoMeasurements = 500)
         {
             string[] lines = TryReadLinesFromFile("/proc/cpuinfo");
 
@@ -273,7 +294,7 @@ namespace Hardware.Info.Linux
 
             if (includePercentProcessorTime)
             {
-                percentProcessorTime = GetCpuUsage(processorList);
+                percentProcessorTime = GetCpuUsage(processorList, millisecondsDelayBetweenTwoMeasurements);
             }
 
             List<CPU> cpuList = new List<CPU>();
@@ -347,7 +368,7 @@ namespace Hardware.Info.Linux
             }
         }
 
-        private static ulong GetCpuUsage(List<Processor> processorList)
+        private static ulong GetCpuUsage(List<Processor> processorList, int millisecondsDelayBetweenTwoMeasurements)
         {
             // Column   Name    Description
             // 1        user    Time spent with normal processing in user mode.
@@ -368,7 +389,7 @@ namespace Hardware.Info.Linux
             // ... 
 
             string[] cpuUsageLineLast = TryReadLinesFromFile("/proc/stat");
-            Task.Delay(500).Wait();
+            Task.Delay(millisecondsDelayBetweenTwoMeasurements).Wait();
             string[] cpuUsageLineNow = TryReadLinesFromFile("/proc/stat");
 
             ulong percentProcessorTime = 0;
@@ -422,6 +443,11 @@ namespace Hardware.Info.Linux
 
             // Get the delta between two reads 
             ulong cpuDelta = cpuSumNow - cpuSumLast;
+
+            if (cpuDelta == 0)
+            {
+                return 0; // avoid System.DivideByZeroException: Attempted to divide by zero.
+            }
 
             // Get the idle time Delta 
             ulong cpuIdle = 0;
@@ -796,7 +822,7 @@ namespace Hardware.Info.Linux
                     Caption = interfaceName,
                     Description = interfaceName,
                     Name = interfaceName,
-                    MACAddress = macAddress,
+                    MACAddress = macAddress.Replace(":", "").ToUpper(),
                     NetConnectionID = interfaceName,
                     ProductName = interfaceName,
                 };
@@ -889,25 +915,16 @@ namespace Hardware.Info.Linux
             return foundIp;
         }
 
-        public override List<NetworkAdapter> GetNetworkAdapterList(bool includeBytesPersec = true, bool includeNetworkAdapterConfiguration = true)
+        public override List<NetworkAdapter> GetNetworkAdapterList(bool includeBytesPersec = true, bool includeNetworkAdapterConfiguration = true, int millisecondsDelayBetweenTwoMeasurements = 1000)
         {
-            List<NetworkAdapter> networkAdapterList;
-
-            try
-            {
-                networkAdapterList = base.GetNetworkAdapterList(includeBytesPersec, includeNetworkAdapterConfiguration);
-            }
-            catch (NetworkInformationException)
-            {
-                networkAdapterList = GetNetworkAdapters();
-            }
+            List<NetworkAdapter> networkAdapterList = GetNetworkAdapters();
 
             if (includeBytesPersec)
             {
                 char[] charSeparators = new char[] { ' ' };
 
                 string[] procNetDevLast = TryReadLinesFromFile("/proc/net/dev");
-                Task.Delay(1000).Wait();
+                Task.Delay(millisecondsDelayBetweenTwoMeasurements).Wait();
                 string[] procNetDevNow = TryReadLinesFromFile("/proc/net/dev");
 
                 foreach (NetworkAdapter networkAdapter in networkAdapterList)
@@ -1161,7 +1178,7 @@ namespace Hardware.Info.Linux
 
             lines = processOutput.Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries);
 
-            foreach (string line in lines.Where(l => l.Contains("VGA compatible controller")))
+            foreach (string line in lines.Where(l => l.Contains("VGA compatible controller") || l.Contains("3D controller") || l.Contains("Display controller")))
             {
                 string[] split = line.Split(':');
 

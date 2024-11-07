@@ -34,6 +34,11 @@ namespace Hardware.Info
         public List<BIOS> BiosList { get; private set; } = new List<BIOS>();
 
         /// <summary>
+        /// List of <see cref="ComputerSystem" />
+        /// </summary>
+        public List<ComputerSystem> ComputerSystemList { get; private set; } = new List<ComputerSystem>();
+
+        /// <summary>
         /// List of <see cref="CPU" />
         /// </summary>
         public List<CPU> CpuList { get; private set; } = new List<CPU>();
@@ -122,6 +127,7 @@ namespace Hardware.Info
 
             RefreshBatteryList();
             RefreshBIOSList();
+            RefreshComputerSystemList();
             RefreshCPUList();
             RefreshDriveList();
             RefreshKeyboardList();
@@ -156,10 +162,16 @@ namespace Hardware.Info
         public void RefreshBIOSList() => BiosList = _hardwareInfoRetrieval.GetBiosList();
 
         /// <summary>
+        /// Refresh computer system info
+        /// </summary>
+        public void RefreshComputerSystemList() => ComputerSystemList = _hardwareInfoRetrieval.GetComputerSystemList();
+
+        /// <summary>
         /// Refresh CPU info
         /// </summary>
         /// <param name="includePercentProcessorTime">Include PercentProcessorTime info. This makes the method a bit slower.</param>
-        public void RefreshCPUList(bool includePercentProcessorTime = true) => CpuList = _hardwareInfoRetrieval.GetCpuList(includePercentProcessorTime);
+        /// <param name="millisecondsDelayBetweenTwoMeasurements">Delay in milliseconds between two measurements in Linux</param>
+        public void RefreshCPUList(bool includePercentProcessorTime = true, int millisecondsDelayBetweenTwoMeasurements = 500) => CpuList = _hardwareInfoRetrieval.GetCpuList(includePercentProcessorTime, millisecondsDelayBetweenTwoMeasurements);
 
         /// <summary>
         /// Refresh drive info
@@ -196,7 +208,8 @@ namespace Hardware.Info
         /// </summary>
         /// <param name="includeBytesPerSec">Include BytesPerSec info. This makes the method a bit slower.</param>
         /// <param name="includeNetworkAdapterConfiguration">Include NetworkAdapterConfiguration info. This makes the method a bit slower.</param>
-        public void RefreshNetworkAdapterList(bool includeBytesPerSec = true, bool includeNetworkAdapterConfiguration = true) => NetworkAdapterList = _hardwareInfoRetrieval.GetNetworkAdapterList(includeBytesPerSec, includeNetworkAdapterConfiguration);
+        /// <param name="millisecondsDelayBetweenTwoMeasurements">Delay in milliseconds between two measurements in Linux</param>
+        public void RefreshNetworkAdapterList(bool includeBytesPerSec = true, bool includeNetworkAdapterConfiguration = true, int millisecondsDelayBetweenTwoMeasurements = 1000) => NetworkAdapterList = _hardwareInfoRetrieval.GetNetworkAdapterList(includeBytesPerSec, includeNetworkAdapterConfiguration, millisecondsDelayBetweenTwoMeasurements);
 
         /// <summary>
         /// Refresh printer info

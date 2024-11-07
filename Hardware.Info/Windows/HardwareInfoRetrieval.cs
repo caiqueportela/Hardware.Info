@@ -248,7 +248,35 @@ namespace Hardware.Info.Windows
             return biosList;
         }
 
-        public List<CPU> GetCpuList(bool includePercentProcessorTime = true)
+        public List<ComputerSystem> GetComputerSystemList()
+        {
+            List<ComputerSystem> computerSystemList = new List<ComputerSystem>();
+
+            string queryString = UseAsteriskInWMI ? "SELECT * FROM Win32_ComputerSystemProduct"
+                                                  : "SELECT Caption, Description, IdentifyingNumber, Name, SKUNumber, UUID, Vendor, Version FROM Win32_ComputerSystemProduct";
+            using ManagementObjectSearcher mos = new ManagementObjectSearcher(_managementScope, queryString, _enumerationOptions);
+
+            foreach (ManagementBaseObject mo in mos.Get())
+            {
+                ComputerSystem computerSystem = new ComputerSystem
+                {
+                    Caption = GetPropertyString(mo["Caption"]),
+                    Description = GetPropertyString(mo["Description"]),
+                    IdentifyingNumber = GetPropertyString(mo["IdentifyingNumber"]),
+                    Name = GetPropertyString(mo["Name"]),
+                    SKUNumber = GetPropertyString(mo["SKUNumber"]),
+                    UUID = GetPropertyString(mo["UUID"]),
+                    Vendor = GetPropertyString(mo["Vendor"]),
+                    Version = GetPropertyString(mo["Version"])
+                };
+
+                computerSystemList.Add(computerSystem);
+            }
+
+            return computerSystemList;
+        }
+
+        public List<CPU> GetCpuList(bool includePercentProcessorTime = true, int millisecondsDelayBetweenTwoMeasurements = 500)
         {
             List<CPU> cpuList = new List<CPU>();
 
@@ -671,7 +699,7 @@ namespace Hardware.Info.Windows
             return mouseList;
         }
 
-        public override List<NetworkAdapter> GetNetworkAdapterList(bool includeBytesPersec = true, bool includeNetworkAdapterConfiguration = true)
+        public override List<NetworkAdapter> GetNetworkAdapterList(bool includeBytesPersec = true, bool includeNetworkAdapterConfiguration = true, int millisecondsDelayBetweenTwoMeasurements = 1000)
         {
             List<NetworkAdapter> networkAdapterList = new List<NetworkAdapter>();
 
